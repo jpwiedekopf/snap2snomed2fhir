@@ -6,6 +6,9 @@ name = "pypi"
 [packages]
 rich = "*"
 inquirer = "*"
+click = "*"
+fhirclient = "*"
+pandas = "*"
 openpyxl = "*"
 
 [dev-packages]
