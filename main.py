@@ -28,7 +28,8 @@ class Arguments:
                  version: Optional[str],
                  name: Optional[str],
                  title: Optional[str],
-                 id: Optional[str]):
+                 id: Optional[str],
+                 status: Optional[str]):
         self.input_filename = input_filename
         self.output_filename = output_filename
         self.url = url
@@ -36,6 +37,7 @@ class Arguments:
         self.name = name
         self.title = title
         self.id = id
+        self.status = status
 
 
 class ColumnMap:
@@ -148,9 +150,9 @@ class Snap2Snomed2Fhir:
 @click.option("--id", "-i", help="The ID (<= 64 chars, alphanumeric and `-`) of the ConceptMap")
 @click.option("--status", "-s", help="The status of the ConceptMap",
               type=click.Choice(["draft", "active", "retired", "unknown"]))
-def snap2snomed2fhir_app(input_filename, output_filename, url, version, name, title, id):
+def snap2snomed2fhir_app(input_filename, output_filename, url, version, name, title, id, status):
     args = Arguments(input_filename=input_filename, output_filename=output_filename, url=url, version=version,
-                     name=name, title=title, id=id)
+                     name=name, title=title, id=id, status=status)
     print(args)
     Snap2Snomed2Fhir(args).snap2snomed2fhir()
 
