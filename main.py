@@ -1,7 +1,7 @@
 # This is a sample Python script.
 import datetime
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, Union
 import json
 import click
 import inquirer
@@ -9,6 +9,14 @@ import pandas
 from fhirclient.models import conceptmap
 from pandas import DataFrame
 from rich import print
+
+
+def validate_inquirer(_, current: str) -> bool:
+    if not current:
+        raise inquirer.errors.ValidationError(
+            '', reason="The element may not be blank")
+    else:
+        return True
 
 
 @dataclass
@@ -20,16 +28,20 @@ class Arguments:
     name: Optional[str]
     title: Optional[str]
     id: Optional[str]
+    status: Optional[str]
+    experimental: Optional[bool]
+    group_source: Optional[str]
+    target_uri: Optional[str]
+    group_source: Optional[str]
+    group_source_version: Optional[str]
+    group_target: Optional[str]
+    group_target_version: Optional[str]
 
-    def __init__(self,
-                 input_filename: str,
-                 output_filename: str,
-                 url: Optional[str],
-                 version: Optional[str],
-                 name: Optional[str],
-                 title: Optional[str],
-                 id: Optional[str],
-                 status: Optional[str]):
+    def __init__(self, input_filename: str, output_filename: str, url: Optional[str], version: Optional[str],
+                 name: Optional[str], title: Optional[str], id: Optional[str], status: Optional[str],
+                 experimental: Optional[str], source_uri: Optional[str], target_uri: Optional[str],
+                 group_source: Optional[str], group_source_version: Optional[str], group_target: Optional[str],
+                 group_target_version: Optional[str]):
         self.input_filename = input_filename
         self.output_filename = output_filename
         self.url = url
@@ -38,6 +50,18 @@ class Arguments:
         self.title = title
         self.id = id
         self.status = status
+        if experimental == 'true':
+            self.experimental = True
+        elif experimental == 'false':
+            self.experimental = False
+        else:
+            self.experimental = None
+        self.source_uri = source_uri
+        self.target_uri = target_uri
+        self.group_source = group_source
+        self.group_source_version = group_source_version
+        self.group_target = group_target
+        self.group_target_version = group_target_version
 
 
 class ColumnMap:
@@ -80,7 +104,7 @@ class Snap2Snomed2Fhir:
             df = pandas.read_excel(ef, sheet_name=0, header=0, dtype=str)
             return df
 
-    def map_target(self, row: Dict) -> [conceptmap.ConceptMapGroupElementTarget, None]:
+    def map_target(self, row: Dict) -> Optional[conceptmap.ConceptMapGroupElementTarget]:
         snap_equivalence = str(row[self.column_map.relationship])
         snap_no_map = row[self.column_map.no_map_flag]
         equivalence = self.equivalence_map[(snap_equivalence, snap_no_map)]
@@ -102,22 +126,65 @@ class Snap2Snomed2Fhir:
 
     def map2fhir(self, df: DataFrame) -> conceptmap.ConceptMap:
         questions = []
-        if self.args.url is None:
-            questions.append(inquirer.Text("url", message="Canonical URL of the ConceptMap"))
-        if self.args.version is None:
-            questions.append(inquirer.Text("version", message="Version"))
-        questions.append(inquirer.List("status", message="Status", choices=["draft", "active", "retired", "unknown"]))
-        questions.append(inquirer.List("experimental", message="Experimental", choices=[True, False]))
+        answers = {
+            "date": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:00Z")
+        }
+
+        question_map: Dict[str, tuple[Union[str, bool], inquirer.questions.Question]] = {
+            "url": (self.args.url, inquirer.Text("url", message="Canonical URL of the ConceptMap", validate=validate_inquirer)),
+            "version": (self.args.version, inquirer.Text("version", message="Version", validate=validate_inquirer)),
+            "id": (self.args.id, inquirer.Text("id", message="ID", validate=validate_inquirer)),
+            "name": (self.args.name, inquirer.Text("name", message="Name (for machines)", validate=validate_inquirer)),
+            "title": (self.args.title, inquirer.Text("title", message="Title (for humans)", validate=validate_inquirer)),
+            "status": (self.args.status, inquirer.List("status",
+                                                       message="Status",
+                                                       choices=["draft", "active", "retired", "unknown"], validate=validate_inquirer)),
+            "experimental": (self.args.experimental, inquirer.List("experimental",
+                                                                   message="Experimental",
+                                                                   choices=[True, False], validate=validate_inquirer)),
+            "sourceUri": (self.args.source_uri, inquirer.Text("sourceUri", message="Source URI of the VS for the CM context",
+                                                              validate=validate_inquirer)),
+            "targetUri": (self.args.source_uri, inquirer.Text("targetUri", message="Target URI of the VS for the CM context",
+                                                              validate=validate_inquirer)),
+        }
+
+        for answer_key, (answer_value, question) in question_map.items():
+            if answer_value is None:
+                questions.append(question)
+            else:
+                answers[answer_key] = answer_value
+
         if len(questions):
-            answers = inquirer.prompt(questions)
-        else:
-            answers = {}
-        answers.update({
-            "date": datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-00")
-        })
+            answers.update(inquirer.prompt(questions))
+
+        group_question_map: Dict[str, tuple[str, inquirer.questions.Question]] = {
+            "source": (self.args.group_source, inquirer.Text("source", message="Group source URI", validate=validate_inquirer)),
+            "sourceVersion": (self.args.group_source_version, inquirer.Text("sourceVersion", message="Group source version")),
+            "target": (self.args.group_target, inquirer.Text("target", message="Target source URI", validate=validate_inquirer)),
+            "targetVersion": (self.args.group_target_version, inquirer.Text("targetVersion", message="Target source version")),
+        }
+
+        group_questions = []
+        group_answers = {
+            "element": []
+        }
+        for answer_key, (answer_value, question) in group_question_map.items():
+            if answer_value is None:
+                group_questions.append(question)
+            else:
+                group_answers[answer_key] = answer_value
+        if len(group_questions):
+            group_answers.update(inquirer.prompt(group_questions))
+
+        
+
         cm = conceptmap.ConceptMap(answers)
-        cm_group = conceptmap.ConceptMapGroup()
-        cm_group.element = []
+        cm_group = conceptmap.ConceptMapGroup(group_answers) 
+        f_json = cm.as_json()
+        f_json["group"] = [
+            group_answers
+        ]
+        print(f_json)
         mappings = {}
 
         for index, row in df.iterrows():
@@ -136,7 +203,7 @@ class Snap2Snomed2Fhir:
             mappings[source_code] = current_map
         cm_group.element = [element for element in mappings.values()]
         cm.group = [cm_group]
-        print(cm.as_json())
+        # print(cm.as_json())
         return cm
 
 
@@ -150,9 +217,24 @@ class Snap2Snomed2Fhir:
 @click.option("--id", "-i", help="The ID (<= 64 chars, alphanumeric and `-`) of the ConceptMap")
 @click.option("--status", "-s", help="The status of the ConceptMap",
               type=click.Choice(["draft", "active", "retired", "unknown"]))
-def snap2snomed2fhir_app(input_filename, output_filename, url, version, name, title, id, status):
-    args = Arguments(input_filename=input_filename, output_filename=output_filename, url=url, version=version,
-                     name=name, title=title, id=id, status=status)
+@click.option("--experimental", "-e", help="Whether the CM is experimental",
+              type=click.Choice(["True", "False", "true", "false"]))
+@click.option("--source-uri", help="The source VS URI of the ConceptMap")
+@click.option("--target-uri", help="The target VS URI of the ConceptMap")
+@click.option("--group-source", help="The source CS URI of the ConceptMap group")
+@click.option("--group-source-version", help="The source CS version of the ConceptMap group")
+@click.option("--group-target", help="The target CS URI of the ConceptMap group")
+@click.option("--group-target-version", help="The target CS version of the ConceptMap group")
+def snap2snomed2fhir_app(input_filename: str, output_filename: str, url: str, version: str,
+                         name: str, title: str, id, status: str,
+                         experimental: str, source_uri: str, target_uri: str,
+                         group_source: str, group_source_version: str, group_target: str,
+                         group_target_version: str):
+    args = Arguments(input_filename=input_filename, output_filename=output_filename, url=url,
+                     version=version, name=name, title=title, id=id,
+                     status=status, experimental=experimental.lower(), source_uri=source_uri,
+                     target_uri=target_uri, group_source=group_source, group_source_version=group_source_version,
+                     group_target=group_target, group_target_version=group_target_version)
     print(args)
     Snap2Snomed2Fhir(args).snap2snomed2fhir()
 
